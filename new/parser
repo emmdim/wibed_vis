@@ -1,0 +1,289 @@
+#!/usr/bin/lua
+
+local fi=io.open("topology","r")
+local fo=io.open("edges-clean","w")
+
+local nodes = {}
+local interfaces = {}
+local GHz5 = {}
+local GHz24 = {}
+
+
+
+-- Remove TT lines, replace router with source, neighbor with target
+-- put nodes and their interfaces names in arrays
+while true do
+	line = fi:read()
+	if line == nil then break end
+	-- Ignore TT lines
+	if not string.match(line,"TT") and not string.match(line,"primary") and not string.match(line,"secondary") and line~="" then
+		-- Replace 'router' with 'source' & 'neighbor' with 'target'
+		line = string.gsub(line,"router","source")
+		line = string.gsub(line,"neighbor","target")
+		line = string.gsub(line,"label","weight")
+		fo:write(line,"\n")
+	end
+	
+	-- Collect nodes names
+	if string.match(line,"TT") then
+		local t = {}
+		for word in string.gmatch(line,"%S+") do
+			table.insert(t,word)
+		end
+		one = string.sub(t[4],1,-7)
+		two = string.sub(t[7],1,-7)
+		if one==two then
+			node = string.sub(t[7],2,-3)
+			table.insert(nodes,node)
+		end
+	end
+	-- Collect interfaces of nodes
+	if string.match(line,"primary") or string.match(line,"secondary") then
+		local t2 = {}
+		for word in string.gmatch(line,"%S+") do
+			table.insert(t2,word)
+		end
+		interface = string.gsub(t2[4],",","")
+		interface = string.sub(interface,2,-2)
+		table.insert(interfaces,interface)
+	end
+end
+
+fi:close()
+fo:close()
+
+
+-- Identify 5GHz and 2.4GHz interfaces
+--
+for _,v in pairs(interfaces) do
+	head = string.sub(v,1,-2)
+	tail = string.sub(v,13,-1)
+	tail = string.gsub(tail,":","")
+	for _,v2 in pairs(nodes) do
+		head2 = string.sub(v2,1,-2)
+		tail2 = string.sub(v2,13,-1)
+		tail2 = string.gsub(tail2,":","")
+		if head==head2 then
+			if tonumber(tail,16)==tonumber(tail2,16)+1 then
+				table.insert(GHz24,v)
+			else
+				table.insert(GHz5,v)
+			end
+			break
+		end
+	end
+end
+
+function arrayContains(array,element)
+        for _,value in pairs(array) do
+                if value == element then
+                        return true
+                end
+        end
+        return false
+end
+
+local fi2=io.open("edges-clean","r")
+local fo2=io.open("edges-w-types","w")
+while true do
+        line = fi2:read()
+        if line == nil then break end
+	local k = {}
+	for word in string.gmatch(line, "%S+") do
+		table.insert(k,word)
+	end
+	source = string.sub(k[4],2,-3)
+	line = string.sub(line,1,-3)
+
+	-- Red is 2.4; Blue is 5
+	if arrayContains(GHz24,source) then
+		fo2:write(line,","," ","\"color\""," ",":"," "," \"DF0101\"",","," ","\"type\""," ",":"," ","\"curve\""," ","}",",","\n")
+	elseif arrayContains(GHz5,source) then
+		fo2:write(line,","," ","\"color\""," ",":"," "," \"0101DF\"",","," ","\"type\""," ",":"," ","\"curve\""," ","}",",","\n")
+	end
+end
+fi2:close()
+fo2:close()
+
+-- Replace all interfaces with their respecting nodes names
+--
+local fo3=io.open("edges-unsorted","w")
+local fi3=io.open("edges-w-types","r")
+local n = 1
+while true do
+	line = fi3:read()
+	if line == nil then break end
+	local r = {}
+	for word in string.gmatch(line,"%S+") do
+		table.insert(r,word)
+	end
+	source = string.sub(r[4],2,-3)
+	target = string.sub(r[7],2,-3)
+	for key,value in pairs(nodes) do
+		head = string.sub(value,1,-2)
+		if string.match(source,head) then
+			source = key-1
+		elseif string.match(target,head) then
+			target = key-1
+		end
+	end
+	prefix = string.sub(line,2,-114)
+	middle = string.sub(line,33,-82)
+	sufix = string.sub(line,65,-1)
+	fo3:write("{",prefix,source,middle,target,sufix,"\n")
+
+end
+fi3:close()
+fo3:close()
+
+
+-- Sorting the edges
+--
+
+local fo5=io.open("edges-weight","w")
+local nodup = {}
+for key,_ in pairs(nodes) do
+	local fi5=io.open("edges-unsorted","r")
+	while true do
+		line = fi5:read()
+		if line == nil then break end
+		local g = {}
+		for word in string.gmatch(line,"%S+") do
+			table.insert(g,word)
+		end
+		source = string.sub(g[4],1,-2)
+		target = string.sub(g[7],1,-2)
+		--weight = string.sub(g[10],2,-2)
+		
+		prefix = string.sub(line,1,-78)
+		middle = string.sub(line,16,-64)
+		sufix = string.sub(line,29,-1)
+
+		normal = string.sub(line,1,-63)
+		reversed = string.format("%s%s,%s%s",prefix,target,middle,source)
+		
+		if tonumber(source)==key-1 then
+			if not arrayContains(nodup,reversed) then
+				table.insert(nodup,normal)
+				fo5:write(line,"\n")
+			else
+				fo5:write(reversed,sufix,"\n")
+			end
+		end
+	end
+	fi5:close()
+end
+fo5:close()
+
+
+function arrayPartlyContains(array,element)
+        for _,value in pairs(array) do
+                if string.match(value,element) then
+                        return true
+                end
+        end
+        return false
+end
+
+
+
+local fi6=io.open("edges-weight","r")
+local links = {}
+while true do
+	line = fi6:read()
+	if line == nil then break end
+	local b = {}
+	for word in string.gmatch(line,"%S+") do
+		table.insert(b,word)
+	end
+	source = string.sub(b[4],1,-2)
+	target = string.sub(b[7],1,-2)
+	color = string.sub(b[13],2,-3)
+	weight = string.sub(b[10],2,-3)
+
+	head = string.format("%s %s %s",source,target,color)
+	full = string.format("%s %s",head,weight)
+	
+	if arrayPartlyContains(links,head) then
+		for key,value in pairs(links) do
+			if string.match(value,head) then
+				local y = {}
+				for word in string.gmatch(value,"%S+") do
+					table.insert(y,word)
+				end
+				curweight = tonumber(y[4])
+				avgweight = (curweight+tonumber(weight))/2
+				links[key]=string.format("%s %s",head,avgweight)
+			end
+		end
+	else
+		table.insert(links,full)
+	end
+	
+end
+fi6:close()
+
+	
+-- Create an array of edges
+-- 
+
+local fo6=io.open("edges","w")
+local id=0
+for _,value in pairs(links) do
+	local a ={}
+	for word in string.gmatch(value,"%S+") do
+		table.insert(a,word)
+	end
+	source = a[1]
+	target = a[2]
+	weight = a[4]
+	color = a[3]
+	fo6:write("{ \"id\": ",id,", \"source\" : ",source,", \"target\" : ",target,", \"weight\" : \"",weight,"\", \"color\" : \"",color,"\" },","\n")
+	id = id + 1
+end
+fo6:close()
+
+
+
+-- Create a list of nodes
+fo4=io.open("nodes","w")
+-- Get the number of nodes. table.getn function doesn't work here :(
+--local size = 0 for _,v in pairs(nodes) do size = size + 1 end
+local n=1
+for _,v in pairs(nodes) do
+	fo4:write("{"," ","\"id\":"," ",n-1,","," ","\"label\":"," ","\"",v,"\"","},","\n")
+	n = n+1
+end
+fo4:close()
+
+
+-- Remove commas from the last lines of both files
+--
+os.execute("sed -i '$s/,$//' nodes")
+os.execute("sed -i '$s/,$//' edges")
+
+
+-- Merge both nodes and edges files
+--
+os.execute("echo 'var data = { \"nodes\": [' > data.js; cat nodes >> data.js; echo '],\"links\": [' >> data.js; cat edges >> data.js; echo '  ]}' >> data.js")
+
+-- Remove intermediate files
+--
+os.execute("rm edges-clean edges-w-types edges-unsorted edges-weight edges nodes")
+
+--[[
+print("NODES")
+for _,value in pairs(links) do print(value) end
+--[[
+print("2.4GHz Interfaces")
+for _,value in pairs(GHz24) do print(value) end
+print("______")
+print("5GHz interfaces")
+for _,value in pairs(GHz5) do print(value) end
+		
+print("-------")
+print(tonumber("9e76",16))
+print(tonumber("9e77",16))
+print(tonumber("9e78",16))
+
+--]]
