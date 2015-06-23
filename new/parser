@@ -120,7 +120,7 @@ while true do
 	source = string.sub(r[4],2,-3)
 	target = string.sub(r[7],2,-3)
 	for key,value in pairs(nodes) do
-		head = string.sub(value,1,-2)
+		head = string.sub(value,1,-3)
 		if string.match(source,head) then
 			source = key-1
 		elseif string.match(target,head) then
